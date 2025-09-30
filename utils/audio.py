@@ -45,16 +45,27 @@ def synthesize_audio(text: str, voice: str, model_tts: str) -> bytes:
             model=model_tts,
             voice=voice,
             input=text,
-            format="mp3",
         )
     except OpenAIError as exc:
         raise AudioSynthesisError("OpenAI audio synthesis failed.") from exc
 
-    audio_bytes: Optional[bytes] = getattr(response, "read", None)
-    if callable(audio_bytes):
+    audio_bytes: Optional[bytes] = None
+
+    # Try the most common response attributes from the OpenAI SDK. The
+    # response objects differ slightly between versions, so we defensively
+    # check a handful of possibilities before raising an error.
+    if hasattr(response, "content") and response.content:
+        audio_bytes = response.content  # type: ignore[assignment]
+    elif hasattr(response, "audio") and response.audio:
+        audio_bytes = response.audio  # type: ignore[assignment]
+    elif hasattr(response, "read") and callable(response.read):
         audio_bytes = response.read()
-    else:
-        audio_bytes = getattr(response, "audio", None)
+    elif hasattr(response, "to_bytes") and callable(response.to_bytes):
+        audio_bytes = response.to_bytes()
+    elif hasattr(response, "data") and response.data:
+        first = response.data[0]
+        audio_bytes = getattr(first, "audio", None)
+
     if not audio_bytes:
         raise AudioSynthesisError("Audio synthesis returned no data.")
 
