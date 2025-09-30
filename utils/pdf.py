@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Sequence
 
 import streamlit as st
 from fpdf import FPDF
+from fpdf.errors import FPDFException
 
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
@@ -75,14 +76,41 @@ class StoryPDF(FPDF):
         align: str = "J",
         fill: bool = False,
     ) -> None:
-        super().multi_cell(
-            w,
-            h,
-            self._prepare_text(txt),
-            border=border,
-            align=align,
-            fill=fill,
-        )
+        prepared = self._prepare_text(txt)
+        try:
+            super().multi_cell(
+                w,
+                h,
+                prepared,
+                border=border,
+                align=align,
+                fill=fill,
+            )
+        except FPDFException:
+            # When falling back to the built-in Latin-1 fonts, FPDF cannot
+            # automatically break long strings that do not contain whitespace
+            # (for example, Chinese or Japanese text). Insert manual breakpoints
+            # between characters so the PDF generation can continue instead of
+            # raising an exception. This gracefully degrades the output when
+            # Unicode-capable fonts are unavailable.
+            if self.uses_unicode_fonts:
+                raise
+
+            lines = prepared.split("\n")
+            for idx, line in enumerate(lines):
+                spaced = " ".join(line) if line else ""
+                super().multi_cell(
+                    w,
+                    h,
+                    spaced,
+                    border=border,
+                    align=align,
+                    fill=fill,
+                )
+                # ``multi_cell`` automatically moves to the next line, so only
+                # add an explicit line break between the original lines.
+                if idx != len(lines) - 1:
+                    self.ln(h)
 
     def footer(self) -> None:  # type: ignore[override]
         self.set_y(-15)
