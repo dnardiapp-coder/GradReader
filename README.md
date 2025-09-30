@@ -8,7 +8,8 @@ GradReader is a Streamlit application that generates graded reading stories, aud
 - Produce individual PDFs per story or a single combined PDF with a table of contents.
 - Download a ZIP archive containing PDFs, MP3 audio files, and a manifest.
 - Optional bilingual glossary aligned to the reader's native language.
-- Unicode-friendly typography using bundled Noto fonts for global language support.
+- Paragraph-by-paragraph reading support with phonetic guides, translations, and grammar notes.
+- Unicode-friendly typography with automatic discovery (and optional on-demand download) of Noto/Source Han fonts for global language support.
 - Streamlit session state keeps generated artefacts available across reruns.
 
 ## Getting Started
@@ -54,7 +55,7 @@ The sidebar lets you pick separate models for text generation (`model_text`) and
 
 ### Fonts and Licensing
 
-The repository bundles Noto Sans and Noto Serif under the [SIL Open Font License](https://scripts.sil.org/OFL). These ensure consistent rendering of multi-script stories.
+When Unicode-capable fonts are missing, the app now attempts to download Noto Sans/Serif CJK fonts into `assets/fonts` automatically (internet access required). You can also place your own fonts in that directory or install them system-wide, and GradReader will discover them on the next run. This ensures PDFs render Chinese, Japanese, Korean, and other non-Latin scripts without fallback artifacts. All suggested fonts are distributed under the [SIL Open Font License](https://scripts.sil.org/OFL).
 
 ### Troubleshooting
 

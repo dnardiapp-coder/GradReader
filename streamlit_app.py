@@ -304,12 +304,55 @@ def main() -> None:
                 if caption_parts:
                     st.caption(" • ".join(caption_parts))
 
-                st.write(story["body"])
+                summary = story.get("summary")
+                if summary:
+                    st.info(summary)
+
+                reading_sections = story.get("reading_sections") or []
+                if reading_sections:
+                    for section_idx, section in enumerate(reading_sections, start=1):
+                        original = section.get("original")
+                        phonetics = section.get("phonetics")
+                        translation = section.get("translation")
+                        st.markdown(f"**Paragraph {section_idx}:**")
+                        if original:
+                            st.markdown(f"- *Original*: {original}")
+                        if phonetics:
+                            st.markdown(f"- *Pronunciation*: {phonetics}")
+                        if translation:
+                            st.markdown(f"- *Translation*: {translation}")
+                        st.markdown("")
+                else:
+                    st.write(story.get("body", ""))
+
+                full_translation = story.get("translation")
+                if full_translation:
+                    with st.expander("View full story translation"):
+                        st.write(full_translation)
+
                 glossary = story.get("glossary") or []
                 if params_state.get("include_glossary") and glossary:
                     st.markdown("**Glossary**")
                     for entry in glossary:
                         st.write(f"- {entry['term']}: {entry['definition']}")
+
+                grammar_notes = story.get("grammar_notes") or []
+                if grammar_notes:
+                    st.markdown("**Grammar notes**")
+                    for note in grammar_notes:
+                        st.write(f"- {note}")
+
+                practice_ideas = story.get("practice_ideas") or []
+                if practice_ideas:
+                    st.markdown("**Practice ideas**")
+                    for idea in practice_ideas:
+                        st.write(f"- {idea}")
+
+                extra_notes = story.get("extra_notes") or []
+                if extra_notes:
+                    st.markdown("**Strategy & culture notes**")
+                    for note in extra_notes:
+                        st.write(f"- {note}")
 
                 audio_bytes = st.session_state["audio"].get(idx)
                 if audio_bytes:
