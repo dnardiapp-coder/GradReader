@@ -96,11 +96,26 @@ class StoryPDF(FPDF):
             if self.uses_unicode_fonts:
                 raise
 
+            effective_width = w
+            if not effective_width:
+                # ``multi_cell`` treats ``w=0`` as "use the remaining width on the
+                # current line". When the cursor is already at the right margin,
+                # the calculated width can be zero which triggers another
+                # ``FPDFException``. Fall back to the full printable page width so
+                # we always have enough space for at least one character.
+                effective_width = self.w - self.l_margin - self.r_margin
+            if effective_width <= 0:
+                effective_width = max(self.w - self.l_margin - self.r_margin, 1)
+
             lines = prepared.split("\n")
             for idx, line in enumerate(lines):
                 spaced = " ".join(line) if line else ""
+                # Ensure each line starts from the left margin before drawing to
+                # avoid the "no horizontal space" error when the cursor is close
+                # to the right margin.
+                self.set_x(self.l_margin)
                 super().multi_cell(
-                    w,
+                    effective_width,
                     h,
                     spaced,
                     border=border,
@@ -229,8 +244,10 @@ def _write_story_content(pdf: StoryPDF, story: Dict[str, Any], params: Dict[str,
 
 
 def _pdf_to_bytes(pdf: StoryPDF) -> bytes:
-    buffer = pdf.output(dest="S").encode("latin1")
-    return buffer
+    data = pdf.output(dest="S")
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    return data.encode("latin1")
 
 
 @st.cache_data(show_spinner=False)
@@ -248,6 +265,23 @@ def story_to_pdf(story: Dict[str, Any], params: Dict[str, Any]) -> bytes:
 def stories_to_single_pdf(stories: Sequence[Dict[str, Any]], params: Dict[str, Any]) -> bytes:
     """Create a combined PDF containing all stories with a table of contents."""
 
+    preview = _prepare_pdf()
+    preview.add_page()  # Cover placeholder
+    preview.add_page()  # TOC placeholder
+
+    entries: List[Dict[str, Any]] = []
+    for idx, story in enumerate(stories, start=1):
+        preview.add_page()
+        start_page = preview.page_no()
+        _write_story_content(preview, story, params)
+        entries.append(
+            {
+                "index": idx,
+                "title": story.get("title", f"Story {idx}"),
+                "page": start_page,
+            }
+        )
+
     pdf = _prepare_pdf()
     pdf.set_title("Graded Reader Collection")
 
@@ -260,29 +294,19 @@ def stories_to_single_pdf(stories: Sequence[Dict[str, Any]], params: Dict[str, A
     pdf.multi_cell(0, 8, f"Native language: {params.get('native_language')}", align="C")
 
     pdf.add_page()
-    toc_page = pdf.page_no()
     pdf.set_font(pdf.sans_family, size=20)
     pdf.multi_cell(0, 10, "Table of Contents")
     pdf.ln(5)
-
-    entries: List[Dict[str, Any]] = []
-    for idx, story in enumerate(stories, start=1):
-        pdf.add_page()
-        start_page = pdf.page_no()
-        entries.append({"index": idx, "title": story.get("title", f"Story {idx}"), "page": start_page})
-        _write_story_content(pdf, story, params)
-
-    # Populate table of contents after all stories are added
-    current_page = pdf.page_no()
-    pdf.set_page(toc_page)
-    pdf.set_y(pdf.t_margin + 20)
     pdf.set_font(pdf.sans_family, size=12)
     for entry in entries:
         title = entry["title"]
         page_num = entry["page"]
         line = f"{entry['index']}. {title}"[:90]
         pdf.cell(0, 8, f"{line} ...... {page_num}", ln=1)
-    pdf.set_page(current_page)
+
+    for story in stories:
+        pdf.add_page()
+        _write_story_content(pdf, story, params)
 
     return _pdf_to_bytes(pdf)
 
