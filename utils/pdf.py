@@ -11,6 +11,34 @@ from fpdf.errors import FPDFException
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
+FONT_SEARCH_PATHS = [
+    ASSETS_DIR,
+    Path.home() / "fonts",
+    Path.home() / ".fonts",
+    Path("/usr/share/fonts"),
+    Path("/usr/local/share/fonts"),
+    Path("/Library/Fonts"),
+    Path("/System/Library/Fonts"),
+    Path("C:/Windows/Fonts"),
+]
+
+FONT_CANDIDATES = {
+    "sans": [
+        "NotoSansCJKsc-Regular.otf",
+        "NotoSansCJK-Regular.ttc",
+        "NotoSansSC-Regular.otf",
+        "SourceHanSansSC-Regular.otf",
+        "NotoSans-Regular.ttf",
+        "DejaVuSans.ttf",
+    ],
+    "serif": [
+        "NotoSerifCJKsc-Regular.otf",
+        "SourceHanSerifSC-Regular.otf",
+        "NotoSerif-Regular.ttf",
+        "DejaVuSerif.ttf",
+    ],
+}
+
 
 class StoryPDF(FPDF):
     """FPDF subclass that renders footers with page numbers."""
@@ -138,31 +166,37 @@ class StoryPDF(FPDF):
 def load_fonts() -> Dict[str, str]:
     """Return absolute paths to bundled Noto fonts."""
 
-    fonts = {
-        "sans": str(ASSETS_DIR / "NotoSans-Regular.ttf"),
-        "serif": str(ASSETS_DIR / "NotoSerif-Regular.ttf"),
-    }
-
     available: Dict[str, str] = {}
     missing: List[str] = []
 
-    for key, font_path in fonts.items():
-        path_obj = Path(font_path)
-        try:
-            if path_obj.exists() and path_obj.stat().st_size > 0:
-                available[key] = str(path_obj)
-            else:
-                missing.append(key)
-        except OSError:
-            missing.append(key)
+    for role, candidates in FONT_CANDIDATES.items():
+        found_path: str | None = None
+        for directory in FONT_SEARCH_PATHS:
+            try:
+                if not directory.exists():
+                    continue
+            except OSError:
+                continue
+            for candidate in candidates:
+                candidate_path = directory / candidate
+                try:
+                    if candidate_path.exists() and candidate_path.stat().st_size > 0:
+                        found_path = str(candidate_path)
+                        break
+                except OSError:
+                    continue
+            if found_path:
+                break
+        if found_path:
+            available[role] = found_path
+        else:
+            missing.append(role)
 
     if missing:
-        # Prefer a gentle warning instead of an exception so PDF generation can
-        # continue with fallback fonts.
         st.warning(
-            "Custom Noto fonts are unavailable for: "
+            "Unicode-capable fonts not found for: "
             + ", ".join(sorted(missing))
-            + ". Using built-in PDF fonts instead."
+            + ". The PDF will fall back to limited built-in fonts; non-Latin text may not render correctly."
         )
 
     return available
@@ -215,17 +249,72 @@ def _write_story_content(pdf: StoryPDF, story: Dict[str, Any], params: Dict[str,
         pdf.multi_cell(0, 6, meta)
     pdf.ln(4)
 
-    pdf.set_font(pdf.serif_family, size=12)
+    summary = story.get("summary")
+    if summary:
+        pdf.set_font(pdf.serif_family, size=12)
+        pdf.set_text_color(70, 70, 70)
+        pdf.multi_cell(0, 7, summary)
+        pdf.ln(3)
+
+    reading_sections = story.get("reading_sections") or []
+    if reading_sections:
+        pdf.set_font(pdf.sans_family, size=14)
+        pdf.set_text_color(30, 30, 30)
+        pdf.multi_cell(0, 8, "Reading Support")
+        pdf.ln(1)
+
     pdf.set_text_color(0, 0, 0)
+    pdf.set_font(pdf.serif_family, size=12)
 
     line_height = 7
-    for paragraph in story.get("body", "").split("\n"):
-        cleaned = paragraph.strip()
-        if not cleaned:
-            pdf.ln(line_height / 2)
-            continue
-        pdf.multi_cell(0, line_height, cleaned)
+    for section in reading_sections:
+        original = section.get("original", "").strip()
+        phonetics = section.get("phonetics", "").strip()
+        translation = section.get("translation", "").strip()
+        if original:
+            pdf.multi_cell(0, line_height, original)
+        if phonetics:
+            pdf.set_font(pdf.sans_family, size=11)
+            pdf.set_text_color(90, 90, 90)
+            pdf.multi_cell(0, line_height, phonetics)
+            pdf.set_font(pdf.serif_family, size=12)
+            pdf.set_text_color(0, 0, 0)
+        if translation:
+            pdf.set_font(pdf.sans_family, size=11)
+            pdf.set_text_color(40, 40, 40)
+            pdf.multi_cell(0, line_height, translation)
+            pdf.set_font(pdf.serif_family, size=12)
+            pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+
+    if not reading_sections:
+        body_text = story.get("body", "")
+        if body_text:
+            for paragraph in body_text.split("\n"):
+                cleaned = paragraph.strip()
+                if not cleaned:
+                    pdf.ln(line_height / 2)
+                    continue
+                pdf.multi_cell(0, line_height, cleaned)
+                pdf.ln(1)
+
+    full_translation = story.get("translation")
+    if full_translation:
         pdf.ln(1)
+        pdf.set_font(pdf.sans_family, size=14)
+        pdf.multi_cell(0, 8, "Full Story Translation")
+        pdf.ln(1)
+        pdf.set_font(pdf.sans_family, size=11)
+        pdf.set_text_color(40, 40, 40)
+        for paragraph in full_translation.split("\n"):
+            cleaned = paragraph.strip()
+            if not cleaned:
+                pdf.ln(line_height / 2)
+                continue
+            pdf.multi_cell(0, line_height, cleaned)
+            pdf.ln(1)
+        pdf.set_font(pdf.serif_family, size=12)
+        pdf.set_text_color(0, 0, 0)
 
     glossary = story.get("glossary") or []
     if params.get("include_glossary") and glossary:
@@ -240,6 +329,39 @@ def _write_story_content(pdf: StoryPDF, story: Dict[str, Any], params: Dict[str,
             if not term or not definition:
                 continue
             pdf.multi_cell(0, line_height, f"• {term}: {definition}")
+        pdf.ln(2)
+
+    grammar_notes = story.get("grammar_notes") or []
+    if grammar_notes:
+        pdf.ln(2)
+        pdf.set_font(pdf.sans_family, size=14)
+        pdf.multi_cell(0, 8, "Grammar Notes")
+        pdf.ln(1)
+        pdf.set_font(pdf.serif_family, size=12)
+        for note in grammar_notes:
+            pdf.multi_cell(0, line_height, f"• {note}")
+        pdf.ln(2)
+
+    practice_ideas = story.get("practice_ideas") or []
+    if practice_ideas:
+        pdf.ln(1)
+        pdf.set_font(pdf.sans_family, size=14)
+        pdf.multi_cell(0, 8, "Practice Ideas")
+        pdf.ln(1)
+        pdf.set_font(pdf.serif_family, size=12)
+        for idea in practice_ideas:
+            pdf.multi_cell(0, line_height, f"• {idea}")
+        pdf.ln(2)
+
+    extra_notes = story.get("extra_notes") or []
+    if extra_notes:
+        pdf.ln(1)
+        pdf.set_font(pdf.sans_family, size=14)
+        pdf.multi_cell(0, 8, "Strategy & Culture Notes")
+        pdf.ln(1)
+        pdf.set_font(pdf.serif_family, size=12)
+        for note in extra_notes:
+            pdf.multi_cell(0, line_height, f"• {note}")
         pdf.ln(2)
 
 
