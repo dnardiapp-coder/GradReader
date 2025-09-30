@@ -277,30 +277,83 @@ def generate_story(params: Dict[str, Any]) -> Dict[str, Any]:
     temperature = float(params.get("temperature", 0.7))
     top_p = float(params.get("top_p", 0.95))
 
-    response = client.chat.completions.create(
-        model=params.get("model_text", "gpt-4o-mini"),
-        temperature=temperature,
-        top_p=top_p,
-        max_tokens=int(params.get("max_tokens", 1200)),
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a supportive language tutor and expert storyteller "
-                    "who writes engaging graded readers."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
+    def _suggested_token_budget() -> int:
+        story_length = str(params.get("story_length", "medium")).lower()
+        base_budget = {
+            "short": 1600,
+            "medium": 2400,
+            "long": 3200,
+        }.get(story_length, 2400)
 
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("No content returned by the model.")
+        # Longer responses are needed when auxiliary study aids are included.
+        extras = 0
+        if params.get("include_glossary"):
+            extras += 200
+        # Grammar notes, practice ideas, and cultural strategies are always requested.
+        extras += 400
 
-    story = _parse_story_payload(content)
-    return story
+        # Cap the budget to stay within the model's context window while ensuring
+        # we request enough space for well-formed JSON.
+        return max(1200, min(base_budget + extras, 4000))
+
+    max_tokens = int(params.get("max_tokens") or _suggested_token_budget())
+
+    attempt = 0
+    max_attempts = 2
+    last_error: Optional[Exception] = None
+    while attempt < max_attempts:
+        response = client.chat.completions.create(
+            model=params.get("model_text", "gpt-4o-mini"),
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a supportive language tutor and expert storyteller "
+                        "who writes engaging graded readers."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+
+        choice = response.choices[0]
+        finish_reason = getattr(choice, "finish_reason", "stop")
+        if finish_reason and finish_reason != "stop":
+            if finish_reason == "length" and attempt + 1 < max_attempts:
+                max_tokens = min(int(max_tokens * 1.5), 4000)
+                attempt += 1
+                last_error = ValueError(
+                    "Model stopped early because the response hit the token limit; retrying with a larger budget."
+                )
+                continue
+
+            raise ValueError(
+                "Story generation halted early. Increase the max tokens setting or simplify the prompt."
+            )
+
+        content = choice.message.content if choice.message else None
+        if not content:
+            raise ValueError("No content returned by the model.")
+
+        try:
+            story = _parse_story_payload(content)
+            return story
+        except ValueError as exc:
+            last_error = exc
+            if attempt + 1 < max_attempts:
+                max_tokens = min(int(max_tokens * 1.25), 4000)
+                attempt += 1
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+
+    raise ValueError("Story generation failed for an unknown reason.")
 
 
 __all__ = [
