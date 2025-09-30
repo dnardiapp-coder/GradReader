@@ -121,13 +121,52 @@ Respond ONLY in valid JSON with the following structure:
     return prompt.strip()
 
 
+def _repair_json_payload(payload: str) -> Dict[str, Any]:
+    """Attempt to coerce an LLM payload into valid JSON.
+
+    The OpenAI ``response_format`` safeguard generally keeps responses valid,
+    but occasionally the model can still prepend/appended stray text (for
+    example when it emits warnings). We take a forgiving approach by slicing
+    out the innermost JSON object and retrying the parse before raising an
+    error back to the caller. The original payload is preserved for debugging
+    via the chained exception message.
+    """
+
+    text = (payload or "").strip()
+
+    # Fast path – most responses are already valid JSON.
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt to salvage the first JSON object if the model added narration
+    # such as "Here is the story" before the structured payload.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError("Model response was not valid JSON.")
+
+
 def _parse_story_payload(payload: str) -> Dict[str, Any]:
     """Parse a JSON payload returned by the model into a dictionary."""
 
     try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Model response was not valid JSON.") from exc
+        data = _repair_json_payload(payload)
+    except ValueError as exc:
+        # Surface a shortened preview of the problematic payload to help the
+        # user troubleshoot without overwhelming the UI.
+        preview = (payload or "").strip().splitlines()
+        preview_text = " ".join(preview)[:280]
+        raise ValueError(
+            f"Model response was not valid JSON. Received: {preview_text}"
+        ) from exc
 
     title = data.get("title", "Untitled Story").strip()
     summary = str(data.get("summary", "")).strip()
