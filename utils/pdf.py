@@ -74,10 +74,14 @@ def _prepare_pdf() -> StoryPDF:
         font_path = fonts.get(font_key)
         if font_path:
             try:
-                pdf.add_font(family_name, "", font_path, uni=unicode)
-                return family_name
+                path_obj = Path(font_path)
+                if path_obj.exists() and path_obj.stat().st_size > 0:
+                    pdf.add_font(family_name, "", font_path, uni=unicode)
+                    return family_name
             except Exception:  # pragma: no cover - defensive fallback
-                pass
+                st.warning(
+                    "Failed to load custom font '%s'; falling back to built-in fonts." % family_name
+                )
         return fallback
 
     pdf.sans_family = _register_font("NotoSans", "sans", pdf.sans_family)
