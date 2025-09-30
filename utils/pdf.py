@@ -22,6 +22,67 @@ class StoryPDF(FPDF):
         # bundled fonts are unavailable (e.g. when running without Git LFS).
         self.sans_family = "Helvetica"
         self.serif_family = "Times"
+        # Track whether we were able to register Unicode-capable fonts so we
+        # can gracefully degrade text rendering when we fall back to the
+        # built-in Latin-1 fonts.
+        self.uses_unicode_fonts = False
+
+    def _prepare_text(self, text: Any) -> str:
+        """Return text that is safe for the currently selected fonts."""
+
+        if text is None:
+            return ""
+        if isinstance(text, bytes):
+            text_str = text.decode("latin-1", "replace")
+        else:
+            text_str = str(text)
+        if self.uses_unicode_fonts:
+            return text_str
+        # Built-in fonts only support Latin-1, so replace unsupported
+        # characters to avoid FPDF exceptions when measuring string width.
+        return text_str.encode("latin-1", "replace").decode("latin-1")
+
+    # FPDF wraps ``cell``/``multi_cell`` in decorators, so make sure to keep
+    # the same signature when overriding them.
+    def cell(
+        self,
+        w: float = 0,
+        h: float = 0,
+        txt: str | bytes = "",
+        border: int | str = 0,
+        ln: int = 0,
+        align: str = "",
+        fill: bool = False,
+        link: str | int | None = "",
+    ) -> None:
+        super().cell(
+            w,
+            h,
+            self._prepare_text(txt),
+            border=border,
+            ln=ln,
+            align=align,
+            fill=fill,
+            link=link,
+        )
+
+    def multi_cell(
+        self,
+        w: float,
+        h: float,
+        txt: str | bytes,
+        border: int | str = 0,
+        align: str = "J",
+        fill: bool = False,
+    ) -> None:
+        super().multi_cell(
+            w,
+            h,
+            self._prepare_text(txt),
+            border=border,
+            align=align,
+            fill=fill,
+        )
 
     def footer(self) -> None:  # type: ignore[override]
         self.set_y(-15)
@@ -77,6 +138,7 @@ def _prepare_pdf() -> StoryPDF:
                 path_obj = Path(font_path)
                 if path_obj.exists() and path_obj.stat().st_size > 0:
                     pdf.add_font(family_name, "", font_path, uni=unicode)
+                    pdf.uses_unicode_fonts = True
                     return family_name
             except Exception:  # pragma: no cover - defensive fallback
                 st.warning(
